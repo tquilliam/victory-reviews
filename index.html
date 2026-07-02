@@ -27,19 +27,21 @@
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&family=Cormorant+Garamond:wght@600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --green: #063B32;
+    --green: #063B32;        /* Victory deep green (headings / KPI numbers) */
     --green-soft: #0d5346;
-    --red: #EB0242;
-    --tan: #C9BEA4;
+    --red: #EB0242;          /* Victory crimson — the CTA colour */
+    --red-dark: #A3042F;
+    --tan: #C9BEA4;          /* Victory tan */
     --tan-soft: #f2eee5;
-    --ink: #1a1d1c;
-    --muted: #6b7370;
-    --line: #e7e6e0;
+    --bronze: #867650;       /* warm bronze used for secondary text on-site */
+    --ink: #393F47;          /* site body charcoal */
+    --muted: #6f6a63;        /* warm grey */
+    --line: #e6e3dc;
     --card: #ffffff;
-    --page: #f6f5f1;
+    --page: #f9f6f2;         /* site cream */
     --good: #199e70;
     --star: #d99a00;
-    --radius: 12px;
+    --radius: 4px;           /* the site is near-square */
   }
   * { box-sizing: border-box; }
   body {
@@ -49,14 +51,14 @@
   }
   .wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px 64px; }
 
-  header.top { background: var(--green); color: #fff; }
+  header.top { background: #fff; color: var(--ink); border-bottom: 1px solid var(--line); }
   .top-inner { max-width: 1120px; margin: 0 auto; padding: 18px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
   .brand { display: flex; align-items: center; gap: 14px; }
-  .wordmark { font-family: "Cormorant Garamond", Georgia, serif; font-size: 30px; letter-spacing: 3px; line-height: 1; text-transform: uppercase; border-bottom: 3px solid var(--red); padding-bottom: 3px; }
-  .brand small { display: block; font-size: 12px; letter-spacing: 2px; color: var(--tan); text-transform: uppercase; margin-top: 4px; }
-  .subtitle { font-size: 14px; color: rgba(255,255,255,.85); }
-  .top a.sheet { display: inline-flex; align-items: center; gap: 7px; color: #fff; text-decoration: none; border: 1px solid rgba(255,255,255,.35); padding: 8px 14px; border-radius: var(--radius); font-size: 14px; }
-  .top a.sheet:hover { background: rgba(255,255,255,.1); }
+  .wordmark { font-family: "Cormorant Garamond", Georgia, serif; font-size: 30px; letter-spacing: 3px; line-height: 1; text-transform: uppercase; color: var(--green); border-bottom: 3px solid var(--red); padding-bottom: 3px; }
+  .brand small { display: block; font-size: 12px; letter-spacing: 2px; color: var(--bronze); text-transform: uppercase; margin-top: 5px; }
+  .subtitle { font-size: 14px; color: var(--muted); }
+  .top a.sheet { display: inline-flex; align-items: center; gap: 7px; color: #fff; text-decoration: none; background: var(--red); border: 0; padding: 10px 18px; border-radius: 0; font-size: 13px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase; }
+  .top a.sheet:hover { background: var(--red-dark); }
 
   .section-label { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 28px 0 10px; }
 
@@ -99,7 +101,7 @@
   .review { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; }
   .review.flag { background: #eef7f2; border-color: #bfe3d3; }
   .review .meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
-  .badge { font-size: 12px; padding: 3px 9px; border-radius: 999px; font-weight: 500; }
+  .badge { font-size: 11px; padding: 3px 9px; border-radius: 3px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
   .b-google { background: #e6f1fb; color: #0c447c; }
   .b-trustpilot { background: #e1f5ee; color: #0f6e56; }
   .b-productreview { background: #fadfd4; color: #8a3316; }
@@ -118,6 +120,9 @@
   table.matrix td.tot, table.matrix th.tot { font-weight: 600; color: var(--green); background: var(--tan-soft); }
   table.matrix tbody tr:last-child td { border-bottom: 0; }
   table.matrix td.hit { color: var(--green); font-weight: 500; }
+  table.matrix td.avg-hi { color: var(--good); font-weight: 600; }
+  table.matrix td.avg-mid { color: #c98a00; font-weight: 600; }
+  table.matrix td.avg-lo { color: var(--red); font-weight: 600; }
 
   .muted { color: var(--muted); }
   .loading { text-align: center; padding: 60px 0; color: var(--muted); }
@@ -171,7 +176,20 @@ const monthKey = (d) => { const m = String(d || '').match(/(\d{4})-(\d{2})/); if
 const dateVal = (d) => { const t = new Date(d).getTime(); return isNaN(t) ? 0 : t; };
 const stars = (r) => '★★★★★☆☆☆☆☆'.slice(5 - Math.round(num(r)), 10 - Math.round(num(r)));
 const splitNames = (s) => String(s == null ? '' : s).split(',').map((x) => x.trim()).filter(Boolean);
-const staffUnion = (r) => [...new Set([...splitNames(r['Staff Mentioned']), ...splitNames(r['Staff (manual)'])])];
+// Words in the manual box that mean "nobody — clear the auto guess".
+const NONE_TAGS = new Set(['none', 'no one', 'noone', 'nobody', 'n/a', 'na', '-', 'x']);
+// The manual box OVERRIDES the auto "Staff Mentioned" guess for a review:
+//   blank  -> keep the auto match
+//   name(s)-> replace the auto match (list everyone for this row, comma-separated)
+//   "none" -> clear it (auto was a false match; nobody is credited)
+const staffUnion = (r) => {
+  const man = splitNames(r['Staff (manual)']);
+  if (man.length) {
+    if (man.length === 1 && NONE_TAGS.has(man[0].toLowerCase())) return [];
+    return [...new Set(man)];
+  }
+  return [...new Set(splitNames(r['Staff Mentioned']))];
+};
 const INSTALLERS = new Set(['Mick (Adelaide)', 'Richie Currie', 'James Shaw', 'Sunil Navath', 'Mark Upton', 'Anthony Charles', 'Mick Delia', 'Mark Raybould', 'Jordan Amato', 'Samuel Collins', 'Ian Lloyd', 'Steve Ellis', 'Ash Turner', 'Blerim Ibraimovski', 'Glen Williamson', 'Hakan Seker', 'Jack Callanan', 'Jaechung Kim', 'Matthew Ribaux', 'Pascal Zandbergen', 'Tate Volitakis', 'Zach Brownlie', 'Justin Underwood']);
 const ROLE = {};  // filled from the Staff CSV (name -> role); falls back to INSTALLERS set
 const roleOf = (n) => {
@@ -251,6 +269,9 @@ function render() {
       <div class="chart-wrap"><canvas id="trend" role="img" aria-label="Reviews per month, 5-star vs other"></canvas></div>
     </div>
 
+    <div class="section-label">Average rating by platform · by month</div>
+    ${platformMonthMatrix(mKeys)}
+
     <div class="grid-2" style="margin-top:20px;">
       <div class="card">
         <h3>By source</h3>
@@ -300,7 +321,8 @@ function render() {
       <input id="fSearch" type="text" placeholder="Search reviews or a staff name" />
     </div>
     <div id="feed"></div>
-    <div class="foot">Victory Curtains and Blinds — internal reviews dashboard · data from Google, Trustpilot and ProductReview.com.au</div>
+    <div class="foot">Victory Curtains and Blinds — internal reviews dashboard · data from Google, Trustpilot and ProductReview.com.au<br>
+      <span class="muted">ProductReview shows the newest ~350 (the site caps deep pagination) plus everything captured since launch — not its full historical total.</span></div>
   `;
 
   drawTrend(mKeys, mKeys.map((k) => months[k]), mKeys.map((k) => fivesByMonth[k] || 0));
@@ -340,6 +362,37 @@ function renderFeed() {
     </div>`;
   }).join('') : '<div class="muted" style="padding:12px 0;">No reviews match those filters.</div>')
     + (rows.length > shown.length ? `<div class="muted" style="padding:8px 0;">Showing 60 of ${fmt(rows.length)} — narrow with filters above.</div>` : '');
+}
+
+function platformMonthMatrix(monthKeys) {
+  const sources = [...new Set(ALL.map((r) => r.Source).filter(Boolean))];
+  if (!sources.length || !monthKeys.length) return '<div class="card"><div class="muted">Not enough data yet.</div></div>';
+  const cell = {};      // source -> monthKey -> { sum, cnt }
+  const overall = {};   // source -> { sum, cnt }  (all-time)
+  ALL.forEach((r) => {
+    const s = r.Source, rt = num(r.Rating); if (!s || !rt) return;
+    (overall[s] = overall[s] || { sum: 0, cnt: 0 }); overall[s].sum += rt; overall[s].cnt++;
+    const mk = monthKey(r.Date); if (!mk) return;
+    (cell[s] = cell[s] || {}); (cell[s][mk] = cell[s][mk] || { sum: 0, cnt: 0 });
+    cell[s][mk].sum += rt; cell[s][mk].cnt++;
+  });
+  const mLabel = (k) => { const [y, m] = k.split('-'); return new Date(y, m - 1, 1).toLocaleDateString('en-AU', { month: 'short', year: '2-digit' }); };
+  const band = (a) => a >= 4.5 ? 'avg-hi' : a >= 3.5 ? 'avg-mid' : 'avg-lo';
+  const avgOf = (o) => (o && o.cnt) ? o.sum / o.cnt : null;
+  return '<div class="matrix-wrap"><table class="matrix"><thead><tr>'
+    + '<th class="sticky-col">Platform</th><th class="tot">All-time</th>'
+    + monthKeys.map((k) => `<th>${mLabel(k)}</th>`).join('') + '</tr></thead><tbody>'
+    + sources.map((s) => {
+        const ov = avgOf(overall[s]);
+        return `<tr><td class="sticky-col">${esc(s)}</td>`
+          + `<td class="tot" title="${overall[s] ? overall[s].cnt : 0} reviews">${ov != null ? ov.toFixed(1) : ''}</td>`
+          + monthKeys.map((k) => {
+              const o = (cell[s] || {})[k], a = avgOf(o);
+              return a != null ? `<td class="${band(a)}" title="${o.cnt} review${o.cnt === 1 ? '' : 's'}">${a.toFixed(1)}</td>` : '<td></td>';
+            }).join('')
+          + '</tr>';
+      }).join('')
+    + '</tbody></table></div>';
 }
 
 function starMatrix(roleTarget) {
