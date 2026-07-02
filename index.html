@@ -218,7 +218,12 @@ function render() {
   ALL.forEach((r) => { const k = Math.round(num(r.Rating)); if (k >= 1 && k <= 5) dist[k - 1]++; });
 
   const months = {};
-  ALL.forEach((r) => { const k = monthKey(r.Date); if (k) months[k] = (months[k] || 0) + 1; });
+  const fivesByMonth = {};
+  ALL.forEach((r) => {
+    const k = monthKey(r.Date); if (!k) return;
+    months[k] = (months[k] || 0) + 1;
+    if (Math.round(num(r.Rating)) === 5) fivesByMonth[k] = (fivesByMonth[k] || 0) + 1;
+  });
   const mKeys = Object.keys(months).sort().slice(-12);
 
   const staff = {};
@@ -238,7 +243,13 @@ function render() {
     </div>
 
     <div class="section-label">Reviews per month</div>
-    <div class="card"><div class="chart-wrap"><canvas id="trend" role="img" aria-label="Reviews per month"></canvas></div></div>
+    <div class="card">
+      <div style="display:flex; gap:16px; font-size:12px; color:var(--muted); margin-bottom:10px;">
+        <span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:10px;height:10px;border-radius:2px;background:#063B32;"></span>5-star</span>
+        <span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:10px;height:10px;border-radius:2px;background:#cfe3da;"></span>Other</span>
+      </div>
+      <div class="chart-wrap"><canvas id="trend" role="img" aria-label="Reviews per month, 5-star vs other"></canvas></div>
+    </div>
 
     <div class="grid-2" style="margin-top:20px;">
       <div class="card">
@@ -292,7 +303,7 @@ function render() {
     <div class="foot">Victory Curtains and Blinds — internal reviews dashboard · data from Google, Trustpilot and ProductReview.com.au</div>
   `;
 
-  drawTrend(mKeys, mKeys.map((k) => months[k]));
+  drawTrend(mKeys, mKeys.map((k) => months[k]), mKeys.map((k) => fivesByMonth[k] || 0));
   ['fSource', 'fRating', 'fStaff', 'fRole', 'fSearch'].forEach((id) => $('#' + id).addEventListener('input', renderFeed));
   renderFeed();
 }
@@ -357,17 +368,29 @@ function starMatrix(roleTarget) {
 }
 
 let trendChart;
-function drawTrend(labels, data) {
+function drawTrend(labels, totals, fives) {
   const ctx = $('#trend'); if (!ctx) return;
   if (trendChart) trendChart.destroy();
   const pretty = labels.map((k) => { const [y, m] = k.split('-'); return new Date(y, m - 1, 1).toLocaleDateString('en-AU', { month: 'short', year: '2-digit' }); });
+  const others = totals.map((t, i) => Math.max(0, t - fives[i]));
   trendChart = new Chart(ctx, {
     type: 'bar',
-    data: { labels: pretty, datasets: [{ data, backgroundColor: '#063B32', borderRadius: 4, maxBarThickness: 34 }] },
+    data: { labels: pretty, datasets: [
+      { label: '5-star', data: fives, backgroundColor: '#063B32', stack: 's', maxBarThickness: 34 },
+      { label: 'Other', data: others, backgroundColor: '#cfe3da', stack: 's', borderRadius: 4, maxBarThickness: 34 },
+    ] },
     options: { responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: { x: { grid: { display: false }, ticks: { color: '#6b7370', font: { size: 11 } } },
-        y: { beginAtZero: true, grid: { color: '#e7e6e0' }, ticks: { color: '#6b7370', font: { size: 11 }, precision: 0 } } } },
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: {
+          label: (c) => {
+            const t = totals[c.dataIndex], f = fives[c.dataIndex];
+            if (c.dataset.label === '5-star') return '5-star: ' + f + ' (' + (t ? Math.round(f / t * 100) : 0) + '%)';
+            return 'Other: ' + Math.max(0, t - f);
+          },
+          footer: (items) => 'Total: ' + totals[items[0].dataIndex],
+        } } },
+      scales: { x: { stacked: true, grid: { display: false }, ticks: { color: '#6b7370', font: { size: 11 } } },
+        y: { stacked: true, beginAtZero: true, grid: { color: '#e7e6e0' }, ticks: { color: '#6b7370', font: { size: 11 }, precision: 0 } } } },
   });
 }
 </script>
