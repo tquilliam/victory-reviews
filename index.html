@@ -124,6 +124,13 @@
   table.matrix td.avg-mid { color: #c98a00; font-weight: 600; }
   table.matrix td.avg-lo { color: var(--red); font-weight: 600; }
 
+  .viewbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 22px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: #fff; }
+  .seg button { font: inherit; font-size: 13px; padding: 8px 18px; border: 0; background: transparent; color: var(--ink); cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: var(--red); color: #fff; }
+  .viewbar .hint { font-size: 13px; color: var(--muted); }
+
   .muted { color: var(--muted); }
   .loading { text-align: center; padding: 60px 0; color: var(--muted); }
   a.rev-link { color: var(--red); text-decoration: none; font-size: 12.5px; }
@@ -173,6 +180,22 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&':'
 const num = (v) => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 const fmt = (n) => n.toLocaleString('en-AU');
 const monthKey = (d) => { const m = String(d || '').match(/(\d{4})-(\d{2})/); if (m) return m[1] + '-' + m[2]; const dt = new Date(d); return isNaN(dt) ? '' : dt.toISOString().slice(0, 7); };
+// Weeks run Monday–Sunday and are keyed by their Monday (YYYY-MM-DD, local time).
+const ymd = (dt) => dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+const weekKey = (d) => { const dt = new Date(d); if (isNaN(dt)) return ''; return ymd(new Date(dt.getFullYear(), dt.getMonth(), dt.getDate() - (dt.getDay() + 6) % 7)); };
+const GRAINS = {
+  month: { key: monthKey, noun: 'month',
+    label: (k) => { const [y, m] = k.split('-'); return new Date(y, m - 1, 1).toLocaleDateString('en-AU', { month: 'short', year: '2-digit' }); },
+    back: (n) => { const t = new Date(); return monthKey(ymd(new Date(t.getFullYear(), t.getMonth() - n, 1))); } },
+  week: { key: weekKey, noun: 'week',
+    label: (k) => 'w/c ' + new Date(k + 'T00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }),
+    back: (n) => { const t = new Date(); return weekKey(new Date(t.getFullYear(), t.getMonth(), t.getDate() - 7 * n)); } },
+};
+const PERIODS = 12;
+// The last PERIODS months/weeks, oldest -> newest, ending with the current (in-progress) one.
+const lastPeriods = (grain) => Array.from({ length: PERIODS }, (_, i) => GRAINS[grain].back(PERIODS - 1 - i));
+let GRAIN = 'month';
+try { if (localStorage.getItem('reviewsGrain') === 'week') GRAIN = 'week'; } catch (e) {}
 const dateVal = (d) => { const t = new Date(d).getTime(); return isNaN(t) ? 0 : t; };
 const stars = (r) => '★★★★★☆☆☆☆☆'.slice(5 - Math.round(num(r)), 10 - Math.round(num(r)));
 const splitNames = (s) => String(s == null ? '' : s).split(',').map((x) => x.trim()).filter(Boolean);
@@ -226,23 +249,12 @@ function render() {
   const total = ALL.length;
   const avg = (ALL.reduce((s, r) => s + num(r.Rating), 0) / total) || 0;
   const five = ALL.filter((r) => Math.round(num(r.Rating)) === 5).length;
-  const thisMonth = monthKey(new Date().toISOString());
-  const newThis = ALL.filter((r) => monthKey(r.Date) === thisMonth).length;
 
   const bySource = {};
   ALL.forEach((r) => { const s = r.Source || 'Other'; (bySource[s] = bySource[s] || []).push(num(r.Rating)); });
 
   const dist = [0, 0, 0, 0, 0];
   ALL.forEach((r) => { const k = Math.round(num(r.Rating)); if (k >= 1 && k <= 5) dist[k - 1]++; });
-
-  const months = {};
-  const fivesByMonth = {};
-  ALL.forEach((r) => {
-    const k = monthKey(r.Date); if (!k) return;
-    months[k] = (months[k] || 0) + 1;
-    if (Math.round(num(r.Rating)) === 5) fivesByMonth[k] = (fivesByMonth[k] || 0) + 1;
-  });
-  const mKeys = Object.keys(months).sort().slice(-12);
 
   const staff = {};
   ALL.forEach((r) => r._staff.forEach((n) => { staff[n] = (staff[n] || 0) + 1; }));
@@ -253,24 +265,29 @@ function render() {
 
   $('#content').classList.remove('loading');
   $('#content').innerHTML = `
+    <div class="viewbar">
+      <div class="seg" id="grainSeg" role="group" aria-label="Time grain"><button type="button" data-g="month">Monthly</button><button type="button" data-g="week">Weekly</button></div>
+      <span class="hint" id="grainHint"></span>
+    </div>
+
     <div class="kpis">
       <div class="kpi"><div class="label">Total reviews</div><div class="value">${fmt(total)}</div></div>
       <div class="kpi"><div class="label">Average rating</div><div class="value">${avg.toFixed(1)} <small>★</small></div></div>
       <div class="kpi"><div class="label">5-star</div><div class="value">${fmt(five)} <small>${Math.round(five / total * 100)}%</small></div></div>
-      <div class="kpi"><div class="label">New this month</div><div class="value">${fmt(newThis)}</div></div>
+      <div class="kpi"><div class="label" id="kpiNewLbl"></div><div class="value" id="kpiNew"></div></div>
     </div>
 
-    <div class="section-label">Reviews per month</div>
+    <div class="section-label" id="lblTrend"></div>
     <div class="card">
       <div style="display:flex; gap:16px; font-size:12px; color:var(--muted); margin-bottom:10px;">
         <span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:10px;height:10px;border-radius:2px;background:#063B32;"></span>5-star</span>
         <span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:10px;height:10px;border-radius:2px;background:#cfe3da;"></span>Other</span>
       </div>
-      <div class="chart-wrap"><canvas id="trend" role="img" aria-label="Reviews per month, 5-star vs other"></canvas></div>
+      <div class="chart-wrap"><canvas id="trend" role="img" aria-label="Reviews per period, 5-star vs other"></canvas></div>
     </div>
 
-    <div class="section-label">Average rating by platform · by month</div>
-    ${platformMonthMatrix(mKeys)}
+    <div class="section-label" id="lblPlat"></div>
+    <div id="platMatrix"></div>
 
     <div class="grid-2" style="margin-top:20px;">
       <div class="card">
@@ -303,11 +320,11 @@ function render() {
         : '<div class="muted">No staff mentions found yet.</div>'}
     </div>
 
-    <div class="section-label">5-star reviews · installers · by month</div>
-    ${starMatrix('installer')}
+    <div class="section-label" id="lblInst" data-who="installers"></div>
+    <div id="lblInstM"></div>
 
-    <div class="section-label">5-star reviews · sales reps · by month</div>
-    ${starMatrix('rep')}
+    <div class="section-label" id="lblRep" data-who="sales reps"></div>
+    <div id="lblRepM"></div>
 
     <div class="section-label">Reviews</div>
     <div class="filters">
@@ -325,9 +342,41 @@ function render() {
       <span class="muted">ProductReview shows the newest ~350 (the site caps deep pagination) plus everything captured since launch — not its full historical total.</span></div>
   `;
 
-  drawTrend(mKeys, mKeys.map((k) => months[k]), mKeys.map((k) => fivesByMonth[k] || 0));
+  $('#grainSeg').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    GRAIN = b.dataset.g;
+    try { localStorage.setItem('reviewsGrain', GRAIN); } catch (e) {}
+    renderPeriod();
+  }));
+  renderPeriod();
   ['fSource', 'fRating', 'fStaff', 'fRole', 'fSearch'].forEach((id) => $('#' + id).addEventListener('input', renderFeed));
   renderFeed();
+}
+
+// Everything that changes with the Monthly / Weekly toggle.
+function renderPeriod() {
+  const g = GRAINS[GRAIN];
+  const keys = lastPeriods(GRAIN);
+  const counts = {}, fives = {};
+  ALL.forEach((r) => {
+    const k = g.key(r.Date); if (!k) return;
+    counts[k] = (counts[k] || 0) + 1;
+    if (Math.round(num(r.Rating)) === 5) fives[k] = (fives[k] || 0) + 1;
+  });
+  const cur = keys[keys.length - 1], prev = keys[keys.length - 2];
+  $('#grainSeg').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.g === GRAIN));
+  $('#grainHint').textContent = GRAIN === 'week' ? 'Weeks run Monday–Sunday · last 12 weeks · the current week is still in progress' : 'Last 12 months · the current month is still in progress';
+  $('#kpiNewLbl').textContent = 'New this ' + g.noun;
+  $('#kpiNew').innerHTML = `${fmt(counts[cur] || 0)} <small>vs ${fmt(counts[prev] || 0)} last ${g.noun}</small>`;
+  $('#lblTrend').textContent = 'Reviews per ' + g.noun;
+  $('#lblPlat').textContent = 'Average rating by platform · by ' + g.noun;
+  ['lblInst', 'lblRep'].forEach((id) => {
+    $('#' + id).textContent = `5-star reviews · ${$('#' + id).dataset.who} · by ${g.noun}` + (GRAIN === 'week' ? ' · last 12 weeks' : '');
+  });
+  $('#platMatrix').innerHTML = platformMonthMatrix(keys);
+  $('#lblInstM').innerHTML = starMatrix('installer');
+  $('#lblRepM').innerHTML = starMatrix('rep');
+  drawTrend(keys, keys.map((k) => counts[k] || 0), keys.map((k) => fives[k] || 0));
+  requestAnimationFrame(() => document.querySelectorAll('.matrix-wrap.auto-right').forEach((el) => { el.scrollLeft = el.scrollWidth; }));
 }
 
 function renderFeed() {
@@ -365,6 +414,7 @@ function renderFeed() {
 }
 
 function platformMonthMatrix(monthKeys) {
+  const g = GRAINS[GRAIN];
   const sources = [...new Set(ALL.map((r) => r.Source).filter(Boolean))];
   if (!sources.length || !monthKeys.length) return '<div class="card"><div class="muted">Not enough data yet.</div></div>';
   const cell = {};      // source -> monthKey -> { sum, cnt }
@@ -372,11 +422,11 @@ function platformMonthMatrix(monthKeys) {
   ALL.forEach((r) => {
     const s = r.Source, rt = num(r.Rating); if (!s || !rt) return;
     (overall[s] = overall[s] || { sum: 0, cnt: 0 }); overall[s].sum += rt; overall[s].cnt++;
-    const mk = monthKey(r.Date); if (!mk) return;
+    const mk = g.key(r.Date); if (!mk) return;
     (cell[s] = cell[s] || {}); (cell[s][mk] = cell[s][mk] || { sum: 0, cnt: 0 });
     cell[s][mk].sum += rt; cell[s][mk].cnt++;
   });
-  const mLabel = (k) => { const [y, m] = k.split('-'); return new Date(y, m - 1, 1).toLocaleDateString('en-AU', { month: 'short', year: '2-digit' }); };
+  const mLabel = g.label;
   const band = (a) => a >= 4.5 ? 'avg-hi' : a >= 3.5 ? 'avg-mid' : 'avg-lo';
   const avgOf = (o) => (o && o.cnt) ? o.sum / o.cnt : null;
   return '<div class="matrix-wrap"><table class="matrix"><thead><tr>'
@@ -396,10 +446,12 @@ function platformMonthMatrix(monthKeys) {
 }
 
 function starMatrix(roleTarget) {
+  const g = GRAINS[GRAIN];
+  const recent = GRAIN === 'week' ? new Set(lastPeriods('week')) : null;
   const fives = ALL.filter((r) => Math.round(num(r.Rating)) === 5 && r._staff.length);
   const cell = {}, totals = {}, monthsSet = {};
   fives.forEach((r) => {
-    const mk = monthKey(r.Date); if (!mk) return;
+    const mk = g.key(r.Date); if (!mk || (recent && !recent.has(mk))) return;
     r._staff.forEach((nm) => {
       if (roleTarget && roleOf(nm) !== roleTarget) return;
       monthsSet[mk] = true;
@@ -408,14 +460,16 @@ function starMatrix(roleTarget) {
     });
   });
   const staff = Object.keys(totals).sort((a, b) => totals[b] - totals[a]);
-  if (!staff.length) return '<div class="card"><div class="muted">No 5-star reviews mention a staff member yet.</div></div>';
-  const months = Object.keys(monthsSet).sort().reverse();
-  const mLabel = (k) => { const [y, m] = k.split('-'); return new Date(y, m - 1, 1).toLocaleDateString('en-AU', { month: 'short', year: '2-digit' }); };
-  return '<div class="matrix-wrap"><table class="matrix"><thead><tr>'
-    + '<th class="sticky-col">Staff</th><th class="tot">Total</th>'
-    + months.map((k) => `<th>${mLabel(k)}</th>`).join('') + '</tr></thead><tbody>'
-    + staff.map((nm) => `<tr><td class="sticky-col">${esc(nm)}</td><td class="tot">${totals[nm]}</td>`
+  if (!staff.length) return '<div class="card"><div class="muted">' + (recent ? 'No 5-star reviews have mentioned a staff member in the last 12 weeks.' : 'No 5-star reviews mention a staff member yet.') + '</div></div>';
+  const months = recent ? lastPeriods('week') : Object.keys(monthsSet).sort();   // oldest -> newest (left -> right)
+  const mLabel = g.label;
+  return '<div class="matrix-wrap auto-right"><table class="matrix"><thead><tr>'
+    + '<th class="sticky-col">Staff</th>'
+    + months.map((k) => `<th>${mLabel(k)}</th>`).join('')
+    + `<th class="tot">${recent ? '12-wk total' : 'Total'}</th></tr></thead><tbody>`
+    + staff.map((nm) => `<tr><td class="sticky-col">${esc(nm)}</td>`
         + months.map((k) => { const v = (cell[nm] || {})[k]; return v ? `<td class="hit">${v}</td>` : '<td></td>'; }).join('')
+        + `<td class="tot">${totals[nm]}</td>`
         + '</tr>').join('')
     + '</tbody></table></div>';
 }
@@ -424,7 +478,7 @@ let trendChart;
 function drawTrend(labels, totals, fives) {
   const ctx = $('#trend'); if (!ctx) return;
   if (trendChart) trendChart.destroy();
-  const pretty = labels.map((k) => { const [y, m] = k.split('-'); return new Date(y, m - 1, 1).toLocaleDateString('en-AU', { month: 'short', year: '2-digit' }); });
+  const pretty = labels.map(GRAINS[GRAIN].label);
   const others = totals.map((t, i) => Math.max(0, t - fives[i]));
   trendChart = new Chart(ctx, {
     type: 'bar',
