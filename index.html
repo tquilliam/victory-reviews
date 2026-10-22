@@ -130,6 +130,11 @@
   .seg button + button { border-left: 1px solid var(--line); }
   .seg button.on { background: var(--red); color: #fff; }
   .viewbar .hint { font-size: 13px; color: var(--muted); }
+  .pick { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .pick select { font: inherit; font-size: 13px; color: var(--ink); padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; }
+  .viewbar .hint { flex-basis: 100%; }
+  .kpi .value.pos { color: var(--good); }
+  .kpi .value.neg { color: var(--red); }
 
   .muted { color: var(--muted); }
   .loading { text-align: center; padding: 60px 0; color: var(--muted); }
@@ -184,16 +189,27 @@ const monthKey = (d) => { const m = String(d || '').match(/(\d{4})-(\d{2})/); if
 const ymd = (dt) => dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
 const weekKey = (d) => { const dt = new Date(d); if (isNaN(dt)) return ''; return ymd(new Date(dt.getFullYear(), dt.getMonth(), dt.getDate() - (dt.getDay() + 6) % 7)); };
 const GRAINS = {
-  month: { key: monthKey, noun: 'month',
+  month: { key: monthKey, noun: 'month', pick: 'Month',
     label: (k) => { const [y, m] = k.split('-'); return new Date(y, m - 1, 1).toLocaleDateString('en-AU', { month: 'short', year: '2-digit' }); },
-    back: (n) => { const t = new Date(); return monthKey(ymd(new Date(t.getFullYear(), t.getMonth() - n, 1))); } },
-  week: { key: weekKey, noun: 'week',
+    long: (k) => { const [y, m] = k.split('-'); return new Date(y, m - 1, 1).toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }); },
+    shift: (k, n) => { const [y, m] = k.split('-'); return monthKey(ymd(new Date(y, m - 1 + n, 1))); },
+    current: () => monthKey(ymd(new Date())),
+    // every month of year y up to the current one, newest first
+    inYear: (y) => { const out = [], cur = GRAINS.month.current(); for (let m = 12; m >= 1; m--) { const k = y + '-' + String(m).padStart(2, '0'); if (k <= cur) out.push(k); } return out; } },
+  week: { key: weekKey, noun: 'week', pick: 'Week commencing',
     label: (k) => 'w/c ' + new Date(k + 'T00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }),
-    back: (n) => { const t = new Date(); return weekKey(new Date(t.getFullYear(), t.getMonth(), t.getDate() - 7 * n)); } },
+    long: (k) => 'Mon ' + new Date(k + 'T00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }),
+    shift: (k, n) => { const d = new Date(k + 'T00:00'); return ymd(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7 * n)); },
+    current: () => weekKey(new Date()),
+    // every Monday that falls in year y, up to the current week, newest first
+    inYear: (y) => { const out = [], cur = GRAINS.week.current(); const d = new Date(y, 0, 1); d.setDate(1 + (8 - d.getDay()) % 7);
+      for (; d.getFullYear() === Number(y); d.setDate(d.getDate() + 7)) { const k = ymd(d); if (k <= cur) out.push(k); } return out.reverse(); } },
 };
 const PERIODS = 12;
-// The last PERIODS months/weeks, oldest -> newest, ending with the current (in-progress) one.
-const lastPeriods = (grain) => Array.from({ length: PERIODS }, (_, i) => GRAINS[grain].back(PERIODS - 1 - i));
+// The selected month/week (null = the current one). Charts show the PERIODS ending with it.
+const SEL = { month: null, week: null };
+const anchor = (grain) => SEL[grain] || GRAINS[grain].current();
+const lastPeriods = (grain) => Array.from({ length: PERIODS }, (_, i) => GRAINS[grain].shift(anchor(grain), i - PERIODS + 1));
 let GRAIN = 'month';
 try { if (localStorage.getItem('reviewsGrain') === 'week') GRAIN = 'week'; } catch (e) {}
 const dateVal = (d) => { const t = new Date(d).getTime(); return isNaN(t) ? 0 : t; };
@@ -248,7 +264,6 @@ function render() {
 
   const total = ALL.length;
   const avg = (ALL.reduce((s, r) => s + num(r.Rating), 0) / total) || 0;
-  const five = ALL.filter((r) => Math.round(num(r.Rating)) === 5).length;
 
   const bySource = {};
   ALL.forEach((r) => { const s = r.Source || 'Other'; (bySource[s] = bySource[s] || []).push(num(r.Rating)); });
@@ -267,14 +282,17 @@ function render() {
   $('#content').innerHTML = `
     <div class="viewbar">
       <div class="seg" id="grainSeg" role="group" aria-label="Time grain"><button type="button" data-g="month">Monthly</button><button type="button" data-g="week">Weekly</button></div>
+      <label class="pick">Year <select id="pYear"></select></label>
+      <label class="pick"><span id="pPeriodLbl"></span> <select id="pPeriod"></select></label>
       <span class="hint" id="grainHint"></span>
     </div>
 
     <div class="kpis">
-      <div class="kpi"><div class="label">Total reviews</div><div class="value">${fmt(total)}</div></div>
-      <div class="kpi"><div class="label">Average rating</div><div class="value">${avg.toFixed(1)} <small>★</small></div></div>
-      <div class="kpi"><div class="label">5-star</div><div class="value">${fmt(five)} <small>${Math.round(five / total * 100)}%</small></div></div>
-      <div class="kpi"><div class="label" id="kpiNewLbl"></div><div class="value" id="kpiNew"></div></div>
+      <div class="kpi"><div class="label">Total reviews</div><div class="value">${fmt(total)} <small>all time</small></div></div>
+      <div class="kpi"><div class="label">Average rating</div><div class="value">${avg.toFixed(1)} <small>★ all time</small></div></div>
+      <div class="kpi"><div class="label" id="kpiAvgLbl"></div><div class="value" id="kpiAvg"></div></div>
+      <div class="kpi"><div class="label">New positive reviews (4–5★)</div><div class="value pos" id="kpiPos"></div></div>
+      <div class="kpi"><div class="label">New negative reviews (1–3★)</div><div class="value neg" id="kpiNeg"></div></div>
     </div>
 
     <div class="section-label" id="lblTrend"></div>
@@ -347,26 +365,49 @@ function render() {
     try { localStorage.setItem('reviewsGrain', GRAIN); } catch (e) {}
     renderPeriod();
   }));
+  $('#pYear').addEventListener('change', (e) => { SEL[GRAIN] = GRAINS[GRAIN].inYear(e.target.value)[0] || null; renderPeriod(); });
+  $('#pPeriod').addEventListener('change', (e) => { SEL[GRAIN] = e.target.value; renderPeriod(); });
   renderPeriod();
   ['fSource', 'fRating', 'fStaff', 'fRole', 'fSearch'].forEach((id) => $('#' + id).addEventListener('input', renderFeed));
   renderFeed();
 }
 
-// Everything that changes with the Monthly / Weekly toggle.
+// Everything that changes with the Monthly / Weekly toggle and the period pickers.
 function renderPeriod() {
   const g = GRAINS[GRAIN];
   const keys = lastPeriods(GRAIN);
-  const counts = {}, fives = {};
+  const counts = {}, fives = {}, stat = {};   // stat: period -> { n, sum, pos, neg }
   ALL.forEach((r) => {
     const k = g.key(r.Date); if (!k) return;
     counts[k] = (counts[k] || 0) + 1;
-    if (Math.round(num(r.Rating)) === 5) fives[k] = (fives[k] || 0) + 1;
+    const rt = num(r.Rating);
+    if (Math.round(rt) === 5) fives[k] = (fives[k] || 0) + 1;
+    if (!rt) return;
+    const s = stat[k] || (stat[k] = { n: 0, sum: 0, pos: 0, neg: 0 });
+    s.n++; s.sum += rt;
+    if (rt >= 4) s.pos++; else s.neg++;
   });
   const cur = keys[keys.length - 1], prev = keys[keys.length - 2];
+  const sc = stat[cur] || { n: 0, sum: 0, pos: 0, neg: 0 }, sp = stat[prev] || { n: 0, sum: 0, pos: 0, neg: 0 };
+  const isLive = cur === g.current();
+
   $('#grainSeg').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.g === GRAIN));
-  $('#grainHint').textContent = GRAIN === 'week' ? 'Weeks run Monday–Sunday · last 12 weeks · the current week is still in progress' : 'Last 12 months · the current month is still in progress';
-  $('#kpiNewLbl').textContent = 'New this ' + g.noun;
-  $('#kpiNew').innerHTML = `${fmt(counts[cur] || 0)} <small>vs ${fmt(counts[prev] || 0)} last ${g.noun}</small>`;
+  // Year picker: first year with data -> this year. Period picker: that year's weeks/months, newest first.
+  const firstYear = Math.min(...ALL.map((r) => g.key(r.Date)).filter(Boolean).map((k) => +k.slice(0, 4)), new Date().getFullYear());
+  const years = []; for (let y = new Date().getFullYear(); y >= firstYear; y--) years.push(y);
+  const selYear = +cur.slice(0, 4);
+  $('#pYear').innerHTML = years.map((y) => `<option${y === selYear ? ' selected' : ''}>${y}</option>`).join('');
+  $('#pPeriodLbl').textContent = g.pick;
+  $('#pPeriod').innerHTML = g.inYear(selYear).map((k) =>
+    `<option value="${k}"${k === cur ? ' selected' : ''}>${g.long(k)} · ${fmt(counts[k] || 0)} review${counts[k] === 1 ? '' : 's'}</option>`).join('');
+  $('#grainHint').textContent = (GRAIN === 'week' ? 'Weeks run Monday–Sunday · charts show the 12 weeks to the selected week' : 'Charts show the 12 months to the selected month')
+    + (isLive ? ` · this ${g.noun} is still in progress` : '');
+
+  const vsPrev = (n) => `<small>vs ${fmt(n)} prev ${g.noun}</small>`;
+  $('#kpiAvgLbl').textContent = (GRAIN === 'week' ? g.label(cur) : g.long(cur)) + ' average';
+  $('#kpiAvg').innerHTML = sc.n ? `${(sc.sum / sc.n).toFixed(1)} <small>★ · ${fmt(sc.n)} review${sc.n === 1 ? '' : 's'}</small>` : '– <small>no reviews</small>';
+  $('#kpiPos').innerHTML = `${fmt(sc.pos)} ${vsPrev(sp.pos)}`;
+  $('#kpiNeg').innerHTML = `${fmt(sc.neg)} ${vsPrev(sp.neg)}`;
   $('#lblTrend').textContent = 'Reviews per ' + g.noun;
   $('#lblPlat').textContent = 'Average rating by platform · by ' + g.noun;
   ['lblInst', 'lblRep'].forEach((id) => {
